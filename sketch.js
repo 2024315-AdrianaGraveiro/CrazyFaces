@@ -11,43 +11,72 @@
 //   ↑ / ↓     -> densidade (tamanho dos módulos)
 //   S         -> guardar PNG
 
-let img, imgOk = false, paleta = [], modulos = [];
-const FICHEIRO_IMAGEM = 'finalfaces_-1.jpg'; // muda aqui se o nome do ficheiro for outro
-let mic, micLigado = false, nivel = 0;
-let modo = 0, semente = 1, passo = 150;
-const CONTORNO = [20, 10, 25];
+// O sketch tenta estes nomes por ordem. Põe aqui o nome do teu ficheiro.
+const FICHEIRO = ['finalfaces.jpg'];
 
-function preload() {
-  img = loadImage(
-    FICHEIRO_IMAGEM,
-    () => { imgOk = true; },
-    () => { console.error('Imagem não encontrada: ' + FICHEIRO_IMAGEM + ' (confirma o nome e a pasta)'); }
-  );
-}
+const CONTORNO = [20, 10, 25];
+const RESERVA = [
+  [230, 80, 30], [30, 160, 90], [40, 90, 200], [220, 40, 90],
+  [250, 200, 30], [140, 40, 150], [20, 170, 170], [240, 120, 160]
+];
+
+let img = null, imgOk = false;
+let paleta = [], modulos = [];
+let mic = null, micLigado = false, nivel = 0;
+let modo = 0, semente = 1, passo = 150;
+let mensagem = '';
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  mic = new p5.AudioIn();
-  extrairPaleta();
-  construir();
+  paleta = RESERVA.slice();   // arranca logo com cores de reserva
+  construir();                // assim nunca fica preto
+  carregarImagem(0);          // e depois tenta ir buscar a paleta à imagem
+}
+
+// Carrega a imagem sem usar preload (funciona em p5 1.x e 2.x)
+function carregarImagem(i) {
+  if (i >= FICHEIROS.length) {
+    mensagem = 'Imagem não encontrada (' + FICHEIROS.join(', ') + '). A usar paleta de reserva.';
+    return;
+  }
+  let tratado = false;
+  const ok = (im) => {
+    if (tratado) return;
+    tratado = true;
+    img = im;
+    imgOk = true;
+    extrairPaleta();
+    construir();
+    mensagem = '';
+  };
+  const falha = () => {
+    if (tratado) return;
+    tratado = true;
+    carregarImagem(i + 1);
+  };
+  try {
+    const r = loadImage(FICHEIROS[i], ok, falha);
+    if (r && typeof r.then === 'function') r.then(ok).catch(falha);
+  } catch (e) {
+    falha();
+  }
 }
 
 // Input 1: a imagem -> paleta de cores saturadas
 function extrairPaleta() {
-  paleta = [];
+  let nova = [];
   let tentativas = 0;
-  while (imgOk && paleta.length < 12 && tentativas < 5000) {
+  while (nova.length < 12 && tentativas < 5000) {
     tentativas++;
     let c = img.get(floor(random(img.width)), floor(random(img.height)));
+    if (!c || c.length < 3) continue;
     let r = c[0], g = c[1], b = c[2];
     let sat = max(r, g, b) - min(r, g, b);
     if (sat < 90 || max(r, g, b) < 120) continue; // ignora contornos e cores baças
-    let distinta = paleta.every(p => dist(r, g, b, p[0], p[1], p[2]) > 70);
-    if (distinta) paleta.push([r, g, b]);
+    let distinta = nova.every(p => dist(r, g, b, p[0], p[1], p[2]) > 70);
+    if (distinta) nova.push([r, g, b]);
   }
-  // segurança: se a paleta ficar curta, acrescenta cores base
-  let reserva = [[230, 80, 30], [30, 160, 90], [40, 90, 200], [220, 40, 90], [250, 200, 30]];
-  while (paleta.length < 5) paleta.push(reserva[paleta.length % reserva.length]);
+  if (nova.length >= 5) paleta = nova;
 }
 
 function construir() {
@@ -72,19 +101,31 @@ function construir() {
 }
 
 function draw() {
-  // Input 2: som (com alternativa por noise se o microfone estiver desligado)
-  let alvo = micLigado ? mic.getLevel() * 8 : noise(frameCount * 0.01) * 0.25;
-  nivel = lerp(nivel, constrain(alvo, 0, 1), 0.1);
+  try {
+    // Input 2: som (com alternativa por noise se o microfone estiver desligado)
+    let alvo = (micLigado && mic) ? mic.getLevel() * 8 : noise(frameCount * 0.01) * 0.25;
+    nivel = lerp(nivel, constrain(alvo, 0, 1), 0.1);
 
-  background(paleta[0][0] * 0.35, paleta[0][1] * 0.35, paleta[0][2] * 0.35);
-  desenharOndas();
-  for (let m of modulos) m.mostrar();
-
-  if (!imgOk) {
-    fill(255);
+    background(paleta[0][0] * 0.35, paleta[0][1] * 0.35, paleta[0][2] * 0.35);
+    desenharOndas();
+    for (let m of modulos) m.mostrar();
+  } catch (e) {
+    resetMatrix();
+    background(0);
+    fill(255, 90, 90);
     noStroke();
     textSize(16);
-    text('Imagem não carregada: a usar paleta de reserva (' + FICHEIRO_IMAGEM + ')', 20, height - 20);
+    text('Erro no sketch: ' + e.message, 20, 40);
+  }
+
+  if (mensagem) {
+    resetMatrix();
+    noStroke();
+    fill(0, 170);
+    rect(0, height - 40, width, 40);
+    fill(255);
+    textSize(14);
+    text(mensagem, 20, height - 15);
   }
 }
 
@@ -188,14 +229,24 @@ class Modulo {
   }
 }
 
+function ligarMic() {
+  if (typeof p5.AudioIn === 'undefined') {
+    mensagem = 'p5.sound não está incluído no index.html (o microfone não funciona).';
+    return;
+  }
+  if (typeof userStartAudio === 'function') userStartAudio();
+  mic = new p5.AudioIn();
+  mic.start();
+  micLigado = true;
+}
+
 function mousePressed() {
   semente++;
   construir();
 }
 
 function keyPressed() {
-  userStartAudio();
-  if (key === 'm' || key === 'M') { mic.start(); micLigado = true; }
+  if (key === 'm' || key === 'M') ligarMic();
   if (key === 's' || key === 'S') saveCanvas('olhares', 'png');
   if (key === '1') { modo = 0; construir(); }
   if (key === '2') { modo = 1; construir(); }
