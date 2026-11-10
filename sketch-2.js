@@ -3,13 +3,14 @@
 // Expressão: a imagem original dividida em azulejos (módulos) que ondulam, ampliam e rodam
 // Output: visualização interativa sobre a imagem real do desenho
 //
-// Precisa de: imagem_finalfaces.jpg na mesma pasta do index.html (usar Go Live)
+// Precisa de: imagemfinal/finalfaces.jpg (pasta ao lado do index.html) e Go Live
 // Teclas: M = modo (lupa / redemoinho) | + / - = tamanho dos azulejos
 //         S = guardar PNG | clique = onda que se espalha
 
-const FILE = 'imagem_finalfaces.jpg'; // muda aqui se o nome/extensão for outro
+const FILE = 'imagemfinal/finalfaces.jpg'; // pasta/ficheiro, relativo ao index.html
 
 let img;
+let loadError = false;
 let tile = 48;     // tamanho do azulejo em pixéis do ecrã
 let mode = 0;      // 0 = lupa, 1 = redemoinho
 let ripples = [];
@@ -18,8 +19,13 @@ let sc, ox, oy;    // escala e deslocamento da imagem (modo "cover")
 
 async function setup() {
   createCanvas(windowWidth, windowHeight);
-  img = await loadImage(FILE);
-  layout();
+  try {
+    img = await loadImage(FILE);
+    layout();
+  } catch (e) {
+    loadError = true;
+    console.error('Não encontrei a imagem em: ' + FILE, e);
+  }
 }
 
 // ajusta a imagem ao ecrã (preenche tudo, sem deformar) e cria a grelha
@@ -37,6 +43,14 @@ function layout() {
 
 function draw() {
   background(20);
+  if (loadError) {
+    fill(255);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    text('Não encontrei a imagem:\n' + FILE + '\n\nVerifica o nome da pasta e do ficheiro.', width / 2, height / 2);
+    return;
+  }
   if (!img) return;                // ainda a carregar
   const t = frameCount * 0.01;
   const R = min(width, height) * 0.28;  // raio de influência do rato
