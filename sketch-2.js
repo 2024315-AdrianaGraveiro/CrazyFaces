@@ -1,165 +1,136 @@
-// OLHARES — (com)FORMA · Ingredientes
-// Input: rato/toque (posição) + tempo (noise)
-// Expressão: módulos de rosto inspirados na pintura de referência (formas orgânicas,
-//            cores saturadas, contorno grosso, pálpebras pesadas)
-// Output: visualização interativa / gerador de padrão modular
+// OLHARES — a TUA pintura a mexer (p5.js 2.x)
+// Input: rato/toque + clique + tempo (noise)
+// Expressão: a imagem original dividida em azulejos (módulos) que ondulam, ampliam e rodam
+// Output: visualização interativa sobre a imagem real do desenho
 //
-// Teclas: ESPAÇO = nova paleta | + / - = densidade | R = recomeçar | S = guardar PNG
-// Clique = os rostos à volta rodam e mudam de cor
+// Precisa de: imagem_finalfaces.jpg na mesma pasta do index.html (usar Go Live)
+// Teclas: M = modo (lupa / redemoinho) | + / - = tamanho dos azulejos
+//         S = guardar PNG | clique = onda que se espalha
 
-const PALETTES = [
-  ['#e8632a', '#d93a6a', '#2f9e8f', '#2f5fd0', '#f2c230', '#8c1c3a', '#4aa86b'], // pintura
-  ['#ff5a5f', '#ffb400', '#00a6a6', '#5c4dff', '#ff8fb1', '#1b1b3a', '#9be564'],
-  ['#f94144', '#f9844a', '#f9c74f', '#90be6d', '#43aa8b', '#577590', '#9d4edd'],
-];
-let pal = 0;
-let cell = 150;
-let faces = [];
+const FILE = 'imagem_finalfaces.jpg'; // muda aqui se o nome/extensão for outro
 
-function setup() {
+let img;
+let tile = 48;     // tamanho do azulejo em pixéis do ecrã
+let mode = 0;      // 0 = lupa, 1 = redemoinho
+let ripples = [];
+let tiles = [];
+let sc, ox, oy;    // escala e deslocamento da imagem (modo "cover")
+
+async function setup() {
   createCanvas(windowWidth, windowHeight);
-  buildFaces();
+  img = await loadImage(FILE);
+  layout();
 }
 
-function buildFaces() {
-  faces = [];
-  const P = PALETTES[pal];
-  for (let y = 0; y < height + cell; y += cell * 0.82) {
-    const offset = (round(y / cell) % 2) * cell * 0.5; // quincôncio
-    for (let x = -cell; x < width + cell; x += cell * 0.9) {
-      faces.push({
-        x: x + offset + random(-18, 18),
-        y: y + random(-18, 18),
-        r: cell * random(0.45, 0.7),
-        rot: random(-0.9, 0.9),
-        col: random(P),
-        seed: random(1000),
-        gap: random(0.24, 0.34),
-        extra: random(1) < 0.12, // alguns rostos têm um terceiro olho
-      });
+// ajusta a imagem ao ecrã (preenche tudo, sem deformar) e cria a grelha
+function layout() {
+  sc = max(width / img.width, height / img.height);
+  ox = (width - img.width * sc) / 2;
+  oy = (height - img.height * sc) / 2;
+  tiles = [];
+  for (let y = 0; y < height; y += tile) {
+    for (let x = 0; x < width; x += tile) {
+      tiles.push({ x, y, cx: x + tile / 2, cy: y + tile / 2, seed: random(1000) });
     }
   }
 }
 
 function draw() {
-  background('#f2c230');
+  background(20);
+  if (!img) return;                // ainda a carregar
   const t = frameCount * 0.01;
-  for (const f of faces) {
-    // rotação suavizada de volta ao valor-base + animação por noise
-    f.rotShow = f.rot + (noise(f.seed, t * 0.5) - 0.5) * 0.4;
-    drawFace(f, t);
+  const R = min(width, height) * 0.28;  // raio de influência do rato
+  const now = millis() / 1000;
+
+  // limpa ondas antigas
+  ripples = ripples.filter(r => now - r.t0 < 4);
+
+  const items = [];
+  for (const tl of tiles) {
+    let px = tl.cx, py = tl.cy;
+
+    // 1) respiração suave com noise (a imagem nunca fica parada)
+    px += (noise(tl.seed, t) - 0.5) * 10;
+    py += (noise(tl.seed + 50, t) - 0.5) * 10;
+
+    // 2) rato
+    const dx = tl.cx - mouseX, dy = tl.cy - mouseY;
+    const d = sqrt(dx * dx + dy * dy);
+    const f = constrain(1 - d / R, 0, 1);
+    const fe = f * f * (3 - 2 * f);       // suavizado
+    let rot = 0, s = 1;
+
+    if (mode === 0) {
+      // lupa: empurra para fora, amplia e inclina
+      const k = d > 0.001 ? 1 / d : 0;
+      px += dx * k * fe * 45;
+      py += dy * k * fe * 45;
+      s = 1 + fe * 0.9;
+      rot = fe * 0.25 * sin(tl.seed + t * 3);
+    } else {
+      // redemoinho: roda à volta do cursor
+      const ang = fe * 1.4;
+      const c = cos(ang), sn = sin(ang);
+      px = mouseX + dx * c - dy * sn;
+      py = mouseY + dx * sn + dy * c;
+      rot = ang;
+      s = 1 + fe * 0.25;
+    }
+
+    // 3) ondas dos cliques
+    for (const r of ripples) {
+      const rx = tl.cx - r.x, ry = tl.cy - r.y;
+      const rd = sqrt(rx * rx + ry * ry);
+      const age = now - r.t0;
+      const front = age * 520;
+      const env = exp(-abs(rd - front) / 90) * exp(-age * 1.1);
+      const w = sin((rd - front) * 0.05) * env * 28;
+      const k = rd > 0.001 ? 1 / rd : 0;
+      px += rx * k * w;
+      py += ry * k * w;
+      s += env * 0.15;
+    }
+
+    items.push({ tl, px, py, rot, s, order: fe });
   }
-}
 
-function drawFace(f, t) {
-  // quão perto está o rato → olhos mais abertos ("pescam" a atenção)
-  const d = dist(mouseX, mouseY, f.x, f.y);
-  const attention = constrain(map(d, 0, 320, 0, 1), 0, 1);
-  const lid = lerp(0.05, 0.62, attention) * map(noise(f.seed, t), 0, 1, 0.7, 1.2);
-
-  // ângulo para o alvo, em coordenadas locais do rosto
-  const ang = atan2(mouseY - f.y, mouseX - f.x) - f.rotShow;
-
-  push();
-  translate(f.x, f.y);
-  rotate(f.rotShow);
-
-  // cabeça orgânica (noise)
-  stroke(25);
-  strokeWeight(4);
-  fill(f.col);
-  beginShape();
-  for (let a = 0; a < TWO_PI; a += 0.25) {
-    const rr = f.r * (0.78 + 0.4 * noise(cos(a) + f.seed, sin(a) + f.seed, t * 0.3));
-    vertex(rr * cos(a) * 0.78, rr * sin(a));
-  }
-  endShape(CLOSE);
-
-  // olhos
-  const ey = -f.r * 0.12;
-  drawEye(-f.r * f.gap * 2, ey, f.r * 0.34, ang, lid, f.col);
-  drawEye(f.r * f.gap * 2, ey, f.r * 0.34, ang, lid, f.col);
-  if (f.extra) drawEye(0, -f.r * 0.45, f.r * 0.24, ang, lid, f.col);
-
-  // boca
-  noStroke();
-  fill(25, 60);
-  stroke(25);
-  strokeWeight(3);
-  fill('#7a1f3a');
-  const my = f.r * 0.42;
-  const open = 3 + attention * 0 + (1 - attention) * f.r * 0.12; // abre quando há atenção
-  ellipse(0, my, f.r * 0.5, open);
-  pop();
-}
-
-function drawEye(x, y, w, ang, lid, faceCol) {
-  push();
-  translate(x, y);
-  const h = w * 0.5;
-  const ctx = drawingContext;
-
-  // amêndoa recortada
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(-w, 0);
-  ctx.quadraticCurveTo(0, -h * 1.7, w, 0);
-  ctx.quadraticCurveTo(0, h * 1.7, -w, 0);
-  ctx.clip();
+  // os azulejos mais perto do rato desenham-se por cima
+  items.sort((a, b) => a.order - b.order);
 
   noStroke();
-  fill(250);
-  rect(-w, -h * 2, w * 2, h * 4);
-  // íris segue o alvo
-  const ix = cos(ang) * w * 0.3;
-  const iy = sin(ang) * h * 0.4;
-  fill(20);
-  circle(ix, iy, h * 1.1);
-  fill(255);
-  circle(ix - 3, iy - 3, h * 0.25);
-  // pálpebra pesada
-  fill(faceCol);
-  rect(-w, -h * 2, w * 2, h * 2 * lid * 1.6);
-  ctx.restore();
+  for (const it of items) drawTile(it);
+}
 
-  // contorno + pestanas
-    ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(-w, 0);
-  ctx.quadraticCurveTo(0, -h * 1.7, w, 0);
-  ctx.quadraticCurveTo(0, h * 1.7, -w, 0);
-  ctx.strokeStyle = 'rgb(25,25,25)';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.restore();
-  stroke(25);
-  strokeWeight(2);
-  for (let i = -3; i <= 3; i++) {
-    const lx = i * w * 0.28;
-    const ly = -h * 1.7 * 0.5 * (1 - sq(lx / w));
-    line(lx, ly, lx * 1.1, ly - h * 0.35);
-  }
+function drawTile({ tl, px, py, rot, s }) {
+  const pad = 2; // sobreposição para não aparecerem frinchas
+  const w = tile + pad, h = tile + pad;
+
+  // área correspondente na imagem original
+  const sx = constrain((tl.x - pad / 2 - ox) / sc, 0, img.width - 1);
+  const sy = constrain((tl.y - pad / 2 - oy) / sc, 0, img.height - 1);
+  const sw = min(w / sc, img.width - sx);
+  const sh = min(h / sc, img.height - sy);
+
+  push();
+  translate(px, py);
+  rotate(rot);
+  scale(s);
+  image(img, -w / 2, -h / 2, w, h, sx, sy, sw, sh);
   pop();
 }
 
 function mousePressed() {
-  for (const f of faces) {
-    if (dist(mouseX, mouseY, f.x, f.y) < 260) {
-      f.rot += random(-1.2, 1.2);
-      f.col = random(PALETTES[pal]);
-    }
-  }
+  ripples.push({ x: mouseX, y: mouseY, t0: millis() / 1000 });
 }
 
 function keyPressed() {
-  if (key === ' ') { pal = (pal + 1) % PALETTES.length; buildFaces(); }
-  if (key === '+') { cell = max(80, cell - 20); buildFaces(); }
-  if (key === '-') { cell = min(260, cell + 20); buildFaces(); }
-  if (key === 'r' || key === 'R') buildFaces();
-  if (key === 's' || key === 'S') saveCanvas('olhares', 'png');
+  if (key === 'm' || key === 'M') mode = (mode + 1) % 2;
+  if (key === '+') { tile = max(20, tile - 8); layout(); }
+  if (key === '-') { tile = min(120, tile + 8); layout(); }
+  if (key === 's' || key === 'S') saveCanvas('olhares-imagem', 'png');
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  buildFaces();
+  if (img) layout();
 }
